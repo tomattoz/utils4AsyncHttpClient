@@ -10,8 +10,8 @@ let package = Package(
         .library(name: "AsyncHttpClientUtils9", targets: ["AsyncHttpClientUtils9"]),
     ],
     dependencies: [
-        .package(path: "../utils"),
         .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.22.0"),
+        .package(url: "https://github.com/tomattoz/utils", branch: "master"),
     ],
     targets: [
         .target(name: "AsyncHttpClientUtils9",
