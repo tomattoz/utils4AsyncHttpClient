@@ -6,7 +6,15 @@ import NIOHTTP1
 import Utils9
 import Utils9AIAdapter
 
-open class HttpProvider: ObservableObject {
+public protocol HttpProvider {
+    func post<T: StringHashable & Encodable>(at path: String, data: T) throws
+    -> HTTPClientRequest
+
+    func execute(_ request: HTTPClientRequest) async throws
+    -> HTTPClientResponse
+}
+
+open class HttpProviderImpl: ObservableObject, HttpProvider {
     private let salt: String
     
     public init(salt: String) {
