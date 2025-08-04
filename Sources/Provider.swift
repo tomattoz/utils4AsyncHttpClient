@@ -15,22 +15,17 @@ public protocol HttpProvider {
 }
 
 open class HttpProviderImpl: ObservableObject, HttpProvider {
+    private var urlString: StringVar
     private let salt: String
-    
-    public init(salt: String) {
+
+    public init(url: StringVar, salt: String) {
+        self.urlString = url
         self.salt = salt
     }
     
     public func request(for path: String) -> HTTPClientRequest {
-        var url: URL
-        #if DEBUG
-        url = .init(string: "http://127.0.0.1:8080")!
-        #else
-        url = Config.shared.apiURL
-        #endif
-        
-        url = url.appendingPathComponent("api").appendingPathComponent(path)
-        return HTTPClientRequest(url: url.absoluteString)
+        let url = URL(string: urlString.value)!
+        return HTTPClientRequest(url: url.appendingPathComponent(path).absoluteString)
     }
 
     public func post<T: StringHashable & Encodable>(at path: String, data: T) throws
