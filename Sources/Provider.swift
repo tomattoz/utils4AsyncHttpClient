@@ -7,6 +7,9 @@ import Utils9
 import Utils9AIAdapter
 
 public protocol HttpProvider {
+    func get<T: StringHashable & Encodable>(at path: String, data: T) throws
+    -> HTTPClientRequest
+
     func post<T: StringHashable & Encodable>(at path: String, data: T) throws
     -> HTTPClientRequest
 
@@ -27,8 +30,10 @@ open class HttpProviderImpl: ObservableObject, HttpProvider {
         let url = URL(string: urlString.value)!
         return HTTPClientRequest(url: url.appendingPathComponent(path).absoluteString)
     }
-
-    public func post<T: StringHashable & Encodable>(at path: String, data: T) throws
+    
+    private func request<T: StringHashable & Encodable>(at path: String,
+                                                        data: T,
+                                                        method: HTTPMethod) throws
     -> HTTPClientRequest {
         var request = request(for: path)
         let requestBytes = try JSONEncoder().encode(data)
@@ -36,9 +41,19 @@ open class HttpProviderImpl: ObservableObject, HttpProvider {
         request.headers.add(name: .httpHeaderContentType, value: "application/json")
         request.headers.add(name: .httpHeaderContentHash, value: data.stringHash(salt: salt))
         request.body = .bytes(requestBytes)
-        request.method = .POST
+        request.method = method
 
         return request
+    }
+
+    public func get<T: StringHashable & Encodable>(at path: String, data: T) throws
+    -> HTTPClientRequest {
+        try request(at: path, data: data, method: .GET)
+    }
+
+    public func post<T: StringHashable & Encodable>(at path: String, data: T) throws
+    -> HTTPClientRequest {
+        try request(at: path, data: data, method: .POST)
     }
 
     public func execute(_ request: HTTPClientRequest) async throws
