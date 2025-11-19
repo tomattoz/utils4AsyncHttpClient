@@ -15,6 +15,9 @@ public protocol HttpProvider {
 
     func execute(_ request: HTTPClientRequest) async throws
     -> HTTPClientResponse
+    
+    func object<T: Decodable & StringHashable>(_ request: HTTPClientRequest) async throws
+    -> T
 }
 
 open class HttpProviderImpl: ObservableObject, HttpProvider {
@@ -103,3 +106,14 @@ open class HttpProviderImpl: ObservableObject, HttpProvider {
     }
 }
 
+public extension HttpProvider {
+    func objectUnchecked<T: Decodable>(_ request: HTTPClientRequest)
+    async throws -> T {
+        let response = try await execute(request)
+        let data = try await response.body.collect(upTo: .max)
+        let result: T = try JSONDecoder().decode(T.self, from: data)
+        
+        return result
+    }
+
+}
