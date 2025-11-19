@@ -15,19 +15,22 @@ public protocol HttpProvider {
 
     func execute(_ request: HTTPClientRequest) async throws
     -> HTTPClientResponse
+    
+    func object<T: Decodable & StringHashable>(_ request: HTTPClientRequest) async throws
+    -> T
 }
 
 open class HttpProviderImpl: ObservableObject, HttpProvider {
-    private var urlString: StringVar
+    @BoxedVar private var urlString: String
     private let salt: String
 
-    public init(url: StringVar, salt: String) {
-        self.urlString = url
+    public init(url: BoxedVar<String>, salt: String) {
+        self._urlString = url
         self.salt = salt
     }
     
     public func request(for path: String) -> HTTPClientRequest {
-        let url = URL(string: urlString.value)!
+        let url = URL(string: urlString)!
         return HTTPClientRequest(url: url.appendingPathComponent(path).absoluteString)
     }
     
@@ -103,3 +106,14 @@ open class HttpProviderImpl: ObservableObject, HttpProvider {
     }
 }
 
+public extension HttpProvider {
+    func objectUnchecked<T: Decodable>(_ request: HTTPClientRequest)
+    async throws -> T {
+        let response = try await execute(request)
+        let data = try await response.body.collect(upTo: .max)
+        let result: T = try JSONDecoder().decode(T.self, from: data)
+        
+        return result
+    }
+
+}
