@@ -21,10 +21,10 @@ public protocol HttpProvider {
 }
 
 open class HttpProviderImpl: ObservableObject, HttpProvider {
-    @BoxedVar private var urlString: String
+    @AnyVar private var urlString: String
     private let salt: String
 
-    public init(url: BoxedVar<String>, salt: String) {
+    public init(url: AnyVar<String>, salt: String) {
         self._urlString = url
         self.salt = salt
     }
