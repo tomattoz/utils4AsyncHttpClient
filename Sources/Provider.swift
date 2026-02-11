@@ -6,114 +6,120 @@ import NIOHTTP1
 import Utils9
 import Utils9AIAdapter
 
-public protocol HttpProvider {
-    func get<T: StringHashable & Encodable>(at path: String, data: T) throws
-    -> HTTPClientRequest
-
-    func post<T: StringHashable & Encodable>(at path: String, data: T) throws
-    -> HTTPClientRequest
-
-    func execute(_ request: HTTPClientRequest) async throws
-    -> HTTPClientResponse
+open class HTTPTransportNIO: HTTPTransport {
+    public init() {}
     
-    func object<T: Decodable & StringHashable>(_ request: HTTPClientRequest) async throws
-    -> T
+    public func data(_ request: URLRequest) async throws
+    -> (response: HTTPURLResponse, data: Data) {
+        let response = try await _execute(request)
+        return await (
+            response: .init(response, url: request.url!),
+            data: Data(buffer: try response.body.collect(upTo: Int.max))
+        )
+    }
+    
+    public func stream(_ request: URLRequest) async throws
+    -> (response: HTTPURLResponse, stream: AsyncThrowingStream<Data, Error>) {
+        let response = try await _execute(request)
+        return (
+            response: .init(response, url: request.url!),
+            stream: response.body.stream
+        )
+    }
 }
 
-open class HttpProviderImpl: ObservableObject, HttpProvider {
-    @AnyVar private var urlString: String
-    private let salt: String
-
-    public init(url: AnyVar<String>, salt: String) {
-        self._urlString = url
-        self.salt = salt
+private extension HTTPTransportNIO {    
+    func _execute(_ request: URLRequest) async throws -> HTTPClientResponse {
+        let clientRequest = HTTPClientRequest(request)
+        return try await HTTPClient.shared.execute(clientRequest, timeout: .seconds(60))
     }
-    
-    public func request(for path: String) -> HTTPClientRequest {
-        let url = URL(string: urlString)!
-        return HTTPClientRequest(url: url.appendingPathComponent(path).absoluteString)
-    }
-    
-    private func request<T: StringHashable & Encodable>(at path: String,
-                                                        data: T,
-                                                        method: HTTPMethod) throws
-    -> HTTPClientRequest {
-        var request = request(for: path)
-        let requestBytes = try JSONEncoder().encode(data)
+}
 
-        request.headers.add(name: .httpHeaderContentType, value: "application/json")
-        request.headers.add(name: .httpHeaderContentHash, value: data.stringHash(salt: salt))
-        request.body = .bytes(requestBytes)
-        request.method = method
-
-        return request
-    }
-
-    public func get<T: StringHashable & Encodable>(at path: String, data: T) throws
-    -> HTTPClientRequest {
-        try request(at: path, data: data, method: .GET)
-    }
-
-    public func post<T: StringHashable & Encodable>(at path: String, data: T) throws
-    -> HTTPClientRequest {
-        try request(at: path, data: data, method: .POST)
-    }
-
-    public func execute(_ request: HTTPClientRequest) async throws
-    -> HTTPClientResponse {
-        do {
-            return try await _execute(request)
-        }
-        catch {
-            log(error)
-            throw error
+private extension NIOHTTP1.HTTPMethod {
+    init(_ src: Utils9AIAdapter.HTTPMethod) {
+        switch src {
+        case .get:
+            self = .GET
+        case .post:
+            self = .POST
+        case .put:
+            self = .PUT
+        case .patch:
+            self = .PATCH
+        case .delete:
+            self = .DELETE
+        case .head:
+            self = .HEAD
+        case .options:
+            self = .OPTIONS
+        case .trace:
+            self = .TRACE
+        case .connect:
+            self = .CONNECT
         }
     }
-    
-    func _execute(_ request: HTTPClientRequest) async throws -> HTTPClientResponse {
-        let response = try await HTTPClient.shared.execute(request, timeout: .seconds(60))
+}
 
-        if !response.status.isOK {
-            let slice = try await response.body.collect(upTo: .max)
-            log(error: String(buffer: slice))
-            let error = try JSONDecoder().decode(ServerError.self, from: slice)
+extension HTTPURLResponse {
+    convenience init(_ src: HTTPClientResponse, url: URL) {
+        let versionString: String
+        switch src.version {
+        case .http1_0: versionString = "HTTP/1.0"
+        case .http1_1: versionString = "HTTP/1.1"
+        case .http2: versionString = "HTTP/2"
+        case .http3: versionString = "HTTP/3"
+        default: versionString = "HTTP/1.1"
+        }
 
-            switch error {
-            case .http(let error): throw error
-            case .registration(let error): throw error
-            case .content(let error): throw error
-            case .openai(let error): throw error
-            case .openai2(let error): throw error
-            case .generic(let error): throw error
+        var headerFields: [String: String] = [:]
+        for (name, value) in src.headers {
+            if headerFields[name] == nil {
+                headerFields[name] = value
+            }
+        }
+
+        self.init(
+            url: url,
+            statusCode: Int(src.status.code),
+            httpVersion: versionString,
+            headerFields: headerFields
+        )!
+    }
+}
+
+extension HTTPClientRequest {
+    init(_ src: URLRequest) {
+        self.init(url: src.url!.absoluteString)
+        
+        if let method = src.httpMethod {
+            self.method = .RAW(value: method)
+        }
+        
+        if let headers = src.allHTTPHeaderFields {
+            for (name, value) in headers {
+                self.headers.add(name: name, value: value)
             }
         }
         
-        return response
-    }
-    
-    public func object<T: Decodable & StringHashable>(_ request: HTTPClientRequest)
-    async throws -> T {
-        let response = try await execute(request)
-        let result: T = try await JSONDecoder().decode(
-            T.self,
-            from: try response.body.collect(upTo: .max))
-        
-        guard result.stringHash(salt: salt) == response.headers.first(name: .httpHeaderContentHash) else {
-            throw HTTPError.invalidHash
+        if let body = src.httpBody {
+            self.body = .bytes(body)
         }
-        
-        return result
     }
 }
 
-public extension HttpProvider {
-    func objectUnchecked<T: Decodable>(_ request: HTTPClientRequest)
-    async throws -> T {
-        let response = try await execute(request)
-        let data = try await response.body.collect(upTo: .max)
-        let result: T = try JSONDecoder().decode(T.self, from: data)
-        
-        return result
+private extension HTTPClientResponse.Body {
+    var stream: AsyncThrowingStream<Data, Error> {
+        .init { continuation in
+            Task {
+                do {
+                    for try await buffer in self {
+                        continuation.yield(.init(buffer: buffer))
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish()
+                }
+            }
+        }
     }
-
 }

@@ -8,3 +8,9 @@ extension HTTPClient.NWPOSIXError: @retroactive LocalizedError {
         POSIXError(errorCode).localizedDescription
     }
 }
+
+extension POSIXError: @retroactive LocalizedError {
+    public var errorDescription: String? {
+        localizedDescription
+    }
+}
